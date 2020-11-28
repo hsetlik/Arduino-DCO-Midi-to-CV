@@ -1,73 +1,41 @@
 #include <MIDI.h>
 #include <SPI.h>
 
-// Note priority is set by pins A0 and A2
-// Highest note priority: A0 and A2 high (open)
-// Lowest note priority:  A0 low (ground), A2 high (open)
-// Last note priority:    A2 low (ground)
- 
-#define NP_SEL1 A0  // Note priority is set by pins A0 and A2
-#define NP_SEL2 A2  
-
 #define GATE  2
-#define TRIG  3
-#define CLOCK 4
 #define DAC1  8 
-#define DAC2  9
 #define TONE  6
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
 void setup()
 {
- pinMode(NP_SEL1, INPUT_PULLUP);
- pinMode(NP_SEL2, INPUT_PULLUP);
  
  pinMode(GATE, OUTPUT);
- pinMode(TRIG, OUTPUT);
- pinMode(CLOCK, OUTPUT);
  pinMode(DAC1, OUTPUT);
- pinMode(DAC2, OUTPUT);
+ pinMode(TONE, OUTPUT);
  digitalWrite(GATE,LOW);
- digitalWrite(TRIG,LOW);
- digitalWrite(CLOCK,LOW);
  digitalWrite(DAC1,HIGH);
- digitalWrite(DAC2,HIGH);
+ tone(TONE, 440);
 
  SPI.begin();
 
  MIDI.begin(MIDI_CHANNEL_OMNI);
 
- // Set initial pitch bend voltage to 0.5V (mid point).  With Gain = 1X, this is 1023
- // Other DAC outputs will come up as 0V, so don't need to be initialized
- setVoltage(DAC2, 0, 0, 1023);  
 }
 
 bool notes[88] = {0}; 
 int8_t noteOrder[20] = {0}, orderIndx = {0};
 unsigned long trigTimer = 0;
-
 void loop()
 {
   int type, noteMsg, velocity, channel, d1, d2;
-  static unsigned long clock_timer=0, clock_timeout=0;
-  static unsigned int clock_count=0;
-  bool S1, S2;
-
-  if ((trigTimer > 0) && (millis() - trigTimer > 20)) { 
-    digitalWrite(TRIG,LOW); // Set trigger low after 20 msec 
-    trigTimer = 0;  
-  }
-
-  if ((clock_timer > 0) && (millis() - clock_timer > 20)) { 
-    digitalWrite(CLOCK,LOW); // Set clock pulse low after 20 msec 
-    clock_timer = 0;  
-  }
   
   if (MIDI.read()) {                    
     byte type = MIDI.getType();
     switch (type) {
       case midi::NoteOn: 
+        noteMsg = MIDI.getData1() - 21; // A0 = 21, Top Note = 108
+        channel = MIDI.getChannel();
       case midi::NoteOff:
         noteMsg = MIDI.getData1() - 21; // A0 = 21, Top Note = 108
         channel = MIDI.getChannel();
@@ -84,40 +52,12 @@ void loop()
           notes[noteMsg] = true;
         }
 
-        // Pins NP_SEL1 and NP_SEL2 indictate note priority
-        S1 = digitalRead(NP_SEL1);
-        S2 = digitalRead(NP_SEL2);
-
-        if (S1 && S2) { // Highest note priority
-          commandTopNote();
+        if (notes[noteMsg]) 
+        {  
+         orderIndx = (orderIndx+1) % 20;
+         noteOrder[orderIndx] = noteMsg;                 
+         commandLastNote();         
         }
-        else if (!S1 && S2) { // Lowest note priority
-          commandBottomNote();
-        }
-        else { // Last note priority
-           if (notes[noteMsg]) {  // If note is on and using last note priority, add to ordered list
-            orderIndx = (orderIndx+1) % 20;
-            noteOrder[orderIndx] = noteMsg;                 
-          }
-          commandLastNote();         
-        }
-        break;
-        
-      case midi::Clock:
-        if (millis() > clock_timeout + 300) clock_count = 0; // Prevents Clock from starting in between quarter notes after clock is restarted!
-        clock_timeout = millis();
-        
-        if (clock_count == 0) {
-          digitalWrite(CLOCK,HIGH); // Start clock pulse
-          clock_timer=millis();    
-        }
-        clock_count++;
-        if (clock_count == 24) {  // MIDI timing clock sends 24 pulses per quarter note.  Sent pulse only once every 24 pulses
-          clock_count = 0;  
-        }
-        break;
-        
-      case midi::ActiveSensing: 
         break;
         
       default:
@@ -125,44 +65,6 @@ void loop()
         d2 = MIDI.getData2();
     }
   }
-}
-
-void commandTopNote()
-{
-  int topNote = 0;
-  bool noteActive = false;
-  
-  for (int i=0; i<88; i++)
-  {
-    if (notes[i]) {
-      topNote = i;
-      noteActive = true;
-    }
-  }
-
-  if (noteActive) 
-    commandNote(topNote);
-  else // All notes are off, turn off gate
-    digitalWrite(GATE,LOW);  
-}
-
-void commandBottomNote()
-{
-  int bottomNote = 0;
-  bool noteActive = false;
- 
-  for (int i=87; i>=0; i--)
-  {
-    if (notes[i]) {
-      bottomNote = i;
-      noteActive = true;
-    }
-  }
-
-  if (noteActive) 
-    commandNote(bottomNote);
-  else // All notes are off, turn off gate
-    digitalWrite(GATE,LOW);
 }
 
 void commandLastNote()
@@ -187,22 +89,17 @@ void commandLastNote()
 // Note that DAC output will need to be amplified by 1.77X for the standard 1V/octave 
 
 #define NOTE_SF 47.069f // This value can be tuned if CV output isn't exactly 1V/octave
-float NOTE_FREQ = 0.0f;
+
 
 void commandNote(int noteMsg) {
   digitalWrite(GATE,HIGH);
-  digitalWrite(TRIG,HIGH);
-  trigTimer = millis();
-
   unsigned int mV = (unsigned int) ((float) noteMsg * NOTE_SF + 0.5); 
-  unsigned int ampFactor;
   setVoltage(DAC1, 0, 1, mV);  // DAC1, channel 0, gain = 2X
-  setVoltage(DAC1, 1, 1, ampFactor);
-
+  float exponent = (((float)noteMsg - 69.0f) / 12.0f);
+  unsigned int pitch = (unsigned int)(pow(2.0f, exponent) * 440.0f);
+  tone(TONE, pitch);
   //converting the MIDI note # to a pitch in Hz
-  float pitchExp = (noteMsg - 69) / 12;
-  NOTE_FREQ = pow(2, pitchExp) * 440;
-  tone(TONE, NOTE_FREQ);
+  setVoltage(DAC1, 1, 1, amplitude(pitch));
 }
 
 // setVoltage -- Set DAC voltage output
@@ -211,6 +108,11 @@ void commandNote(int noteMsg) {
 // gain: 0 = 1X, 1 = 2X.  
 // mV: integer 0 to 4095.  If gain is 1X, mV is in units of half mV (i.e., 0 to 2048 mV).
 // If gain is 2X, mV is in units of mV
+
+unsigned int amplitude(unsigned int frequency)
+{
+  return (unsigned int)((frequency * 4095) / 1000);
+}
 
 void setVoltage(int dacpin, bool channel, bool gain, unsigned int mV)
 {
