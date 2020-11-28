@@ -14,6 +14,7 @@
 #define CLOCK 4
 #define DAC1  8 
 #define DAC2  9
+#define TONE  6
 
 MIDI_CREATE_DEFAULT_INSTANCE();
 
@@ -81,9 +82,6 @@ void loop()
         }
         else {
           notes[noteMsg] = true;
-          // velocity range from 0 to 4095 mV  Left shift d2 by 5 to scale from 0 to 4095, 
-          // and choose gain = 2X
-          setVoltage(DAC1, 1, 1, velocity<<5);  // DAC1, channel 1, gain = 2X
         }
 
         // Pins NP_SEL1 and NP_SEL2 indictate note priority
@@ -103,25 +101,6 @@ void loop()
           }
           commandLastNote();         
         }
-        break;
-        
-      case midi::PitchBend:
-        d1 = MIDI.getData1();
-        d2 = MIDI.getData2(); // d2 from 0 to 127, mid point = 64
-
-        // Pitch bend output from 0 to 1023 mV.  Left shift d2 by 4 to scale from 0 to 2047.
-        // With DAC gain = 1X, this will yield a range from 0 to 1023 mV.  
-        setVoltage(DAC2, 0, 0, d2<<4);  // DAC2, channel 0, gain = 1X
-        
-        break;
-
-      case midi::ControlChange: 
-        d1 = MIDI.getData1();
-        d2 = MIDI.getData2(); // From 0 to 127
-
-        // CC range from 0 to 4095 mV  Left shift d2 by 5 to scale from 0 to 4095, 
-        // and choose gain = 2X
-        setVoltage(DAC2, 1, 1, d2<<5);  // DAC2, channel 1, gain = 2X
         break;
         
       case midi::Clock:
@@ -208,14 +187,22 @@ void commandLastNote()
 // Note that DAC output will need to be amplified by 1.77X for the standard 1V/octave 
 
 #define NOTE_SF 47.069f // This value can be tuned if CV output isn't exactly 1V/octave
+float NOTE_FREQ = 0.0f;
 
 void commandNote(int noteMsg) {
   digitalWrite(GATE,HIGH);
   digitalWrite(TRIG,HIGH);
   trigTimer = millis();
-  
+
   unsigned int mV = (unsigned int) ((float) noteMsg * NOTE_SF + 0.5); 
+  unsigned int ampFactor;
   setVoltage(DAC1, 0, 1, mV);  // DAC1, channel 0, gain = 2X
+  setVoltage(DAC1, 1, 1, ampFactor);
+
+  //converting the MIDI note # to a pitch in Hz
+  float pitchExp = (noteMsg - 69) / 12;
+  NOTE_FREQ = pow(2, pitchExp) * 440;
+  tone(TONE, NOTE_FREQ);
 }
 
 // setVoltage -- Set DAC voltage output
