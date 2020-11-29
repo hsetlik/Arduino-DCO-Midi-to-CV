@@ -34,8 +34,6 @@ void loop()
     byte type = MIDI.getType();
     switch (type) {
       case midi::NoteOn: 
-        noteMsg = MIDI.getData1() - 21; // A0 = 21, Top Note = 108
-        channel = MIDI.getChannel();
       case midi::NoteOff:
         noteMsg = MIDI.getData1() - 21; // A0 = 21, Top Note = 108
         channel = MIDI.getChannel();
@@ -56,8 +54,8 @@ void loop()
         {  
          orderIndx = (orderIndx+1) % 20;
          noteOrder[orderIndx] = noteMsg;                 
-         commandLastNote();         
         }
+        commandLastNote();         
         break;
         
       default:
@@ -71,7 +69,6 @@ void commandLastNote()
 {
 
   int8_t noteIndx;
-  
   for (int i=0; i<20; i++) {
     noteIndx = noteOrder[ mod(orderIndx-i, 20) ];
     if (notes[noteIndx]) {
@@ -93,13 +90,15 @@ void commandLastNote()
 
 void commandNote(int noteMsg) {
   digitalWrite(GATE,HIGH);
+  
   unsigned int mV = (unsigned int) ((float) noteMsg * NOTE_SF + 0.5); 
   setVoltage(DAC1, 0, 1, mV);  // DAC1, channel 0, gain = 2X
+  
   float exponent = (((float)noteMsg - 69.0f) / 12.0f);
   unsigned int pitch = (unsigned int)(pow(2.0f, exponent) * 440.0f);
   tone(TONE, pitch);
-  //converting the MIDI note # to a pitch in Hz
-  setVoltage(DAC1, 1, 1, amplitude(pitch));
+  setVoltage(DAC1, 1, 1, (amplitude(pitch) / 2));
+  
 }
 
 // setVoltage -- Set DAC voltage output
@@ -111,7 +110,8 @@ void commandNote(int noteMsg) {
 
 unsigned int amplitude(unsigned int frequency)
 {
-  return (unsigned int)((frequency * 4095) / 1000);
+   float perHz = (4095.0f / 1290.0f); //difference in Hz between highest and lowest notes
+   return frequency * perHz;
 }
 
 void setVoltage(int dacpin, bool channel, bool gain, unsigned int mV)
